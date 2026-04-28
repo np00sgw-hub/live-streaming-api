@@ -1,7 +1,7 @@
 import * as z from "zod";
 import { TRPCError } from "@trpc/server";
-import { createTRPCRouter, protectedProcedure } from "../create-context";
-import { supabase } from "../../lib/supabase";
+import { createTRPCRouter, protectedProcedure } from "../create-context.js";
+import { supabase } from "../../lib/supabase.js";
 
 async function areFriends(userA: string, userB: string): Promise<boolean> {
   const { data } = await supabase

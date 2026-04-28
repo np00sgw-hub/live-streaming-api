@@ -1,7 +1,7 @@
 import * as z from "zod";
 import { TRPCError } from "@trpc/server";
-import { createTRPCRouter, publicProcedure, protectedProcedure, adminProcedure } from "../create-context";
-import { supabase } from "../../lib/supabase";
+import { createTRPCRouter, publicProcedure, protectedProcedure, adminProcedure } from "../create-context.js";
+import { supabase } from "../../lib/supabase.js";
 
 async function getConfig() {
   const { data } = await supabase.from("app_config").select("*").eq("id", 1).maybeSingle();

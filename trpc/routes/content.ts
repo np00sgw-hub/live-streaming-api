@@ -1,7 +1,7 @@
 import * as z from "zod";
 import { TRPCError } from "@trpc/server";
-import { createTRPCRouter, publicProcedure, protectedProcedure, adminProcedure } from "../create-context";
-import { supabase } from "../../lib/supabase";
+import { createTRPCRouter, publicProcedure, protectedProcedure, adminProcedure } from "../create-context.js";
+import { supabase } from "../../lib/supabase.js";
 
 export const contentRouter = createTRPCRouter({
   // Scheduled Lives

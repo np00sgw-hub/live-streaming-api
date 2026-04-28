@@ -1,7 +1,7 @@
 import * as z from "zod";
 import { TRPCError } from "@trpc/server";
-import { createTRPCRouter, adminProcedure } from "../create-context";
-import { supabase } from "../../lib/supabase";
+import { createTRPCRouter, adminProcedure } from "../create-context.js";
+import { supabase } from "../../lib/supabase.js";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

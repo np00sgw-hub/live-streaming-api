@@ -1,16 +1,16 @@
-import { createTRPCRouter } from "./create-context";
-import { authRouter } from "./routes/auth";
-import { usersRouter } from "./routes/users";
-import { giftsRouter } from "./routes/gifts";
-import { streamsRouter } from "./routes/streams";
-import { walletRouter } from "./routes/wallet";
-import { rankingsRouter } from "./routes/rankings";
-import { adminRouter } from "./routes/admin";
-import { messagesRouter } from "./routes/messages";
-import { storeRouter } from "./routes/store";
-import { agenciesRouter } from "./routes/agencies";
-import { pkRouter } from "./routes/pk";
-import { contentRouter } from "./routes/content";
+import { createTRPCRouter } from "./create-context.js";
+import { authRouter } from "./routes/auth.js";
+import { usersRouter } from "./routes/users.js";
+import { giftsRouter } from "./routes/gifts.js";
+import { streamsRouter } from "./routes/streams.js";
+import { walletRouter } from "./routes/wallet.js";
+import { rankingsRouter } from "./routes/rankings.js";
+import { adminRouter } from "./routes/admin.js";
+import { messagesRouter } from "./routes/messages.js";
+import { storeRouter } from "./routes/store.js";
+import { agenciesRouter } from "./routes/agencies.js";
+import { pkRouter } from "./routes/pk.js";
+import { contentRouter } from "./routes/content.js";
 
 export const appRouter = createTRPCRouter({
   auth: authRouter,

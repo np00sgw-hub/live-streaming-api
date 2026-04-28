@@ -1,7 +1,7 @@
 import * as z from "zod";
 import { TRPCError } from "@trpc/server";
-import { createTRPCRouter, publicProcedure } from "../create-context";
-import { supabase } from "../../lib/supabase";
+import { createTRPCRouter, publicProcedure } from "../create-context.js";
+import { supabase } from "../../lib/supabase.js";
 
 export const rankingsRouter = createTRPCRouter({
   top: publicProcedure

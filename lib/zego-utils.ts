@@ -1,5 +1,5 @@
 import { createHmac, createHash } from 'crypto';
-import type { ZegoTokenPayload, ZegoRole } from './zego-schemas';
+import type { ZegoTokenPayload, ZegoRole } from './zego-schemas.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Secure Token Generation & Validation
