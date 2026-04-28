@@ -31,6 +31,6 @@ app.get("/", (c) => {
 });
 
 const port = Number(process.env.PORT ?? 3000);
-console.log(`Server running on http://192.168.1.28:${port}`);
+console.log(`Server running on http://localhost:${port}`);
 
 serve({ fetch: app.fetch, port });

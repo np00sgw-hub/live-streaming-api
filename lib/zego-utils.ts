@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+import { createHmac, createHash } from 'crypto';
 import type { ZegoTokenPayload, ZegoRole } from './zego-schemas';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,8 +49,7 @@ export function generateZegoToken(
   const payloadBase64 = Buffer.from(payloadJson).toString('base64');
 
   // 2. Generate HMAC-SHA256 signature
-  const signature = crypto
-    .createHmac('sha256', appSign)
+  const signature = createHmac('sha256', appSign)
     .update(payloadBase64)
     .digest('hex');
 
@@ -77,11 +76,9 @@ export function verifyZegoToken(token: string, appSign: string): ZegoTokenPayloa
     const [payloadBase64, signature] = parts;
 
     // 2. Verify signature
-    const expectedSignature = crypto
-      .createHmac('sha256', appSign)
+    const expectedSignature = createHmac('sha256', appSign)
       .update(payloadBase64)
       .digest('hex');
-
     if (signature !== expectedSignature) {
       console.warn('[Zego] Token signature mismatch');
       return null;
@@ -118,16 +115,9 @@ export function verifyZegoToken(token: string, appSign: string): ZegoTokenPayloa
  * @returns Hex hash
  */
 export function hashZegoToken(token: string): string {
-  return crypto.createHash('sha256').update(token).digest('hex');
+  return createHash('sha256').update(token).digest('hex');
 }
 
-/**
- * Check if token is expired
- *
- * @param expiresAt - Expiry timestamp in ms
- * @param bufferMs - Buffer before expiry (default 5 minutes)
- * @returns true if expired or about to expire
- */
 export function isTokenExpired(expiresAt: number, bufferMs: number = 5 * 60 * 1000): boolean {
   return Date.now() + bufferMs > expiresAt;
 }
