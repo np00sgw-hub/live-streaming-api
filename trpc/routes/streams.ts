@@ -87,6 +87,17 @@ export const streamsRouter = createTRPCRouter({
         }));
     }),
 
+  getActiveStream: protectedProcedure.query(async ({ ctx }) => {
+    const { data: stream } = await supabase
+      .from("streams")
+      .select("*")
+      .eq("host_id", ctx.userId)
+      .eq("is_live", true)
+      .maybeSingle();
+
+    return stream;
+  }),
+
   goLive: protectedProcedure
     .input(
       z.object({
