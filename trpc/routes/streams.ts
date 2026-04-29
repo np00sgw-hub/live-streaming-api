@@ -472,6 +472,7 @@ export const streamsRouter = createTRPCRouter({
     const cfg = await getConfig();
     return {
       appId: cfg?.zego_app_id ?? "",
+      appSign: cfg?.zego_app_sign ?? "",
       serverUrl: cfg?.zego_server_url ?? "",
       enabled: cfg?.zego_enabled ?? false,
       isConfigured:
