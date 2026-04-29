@@ -181,11 +181,9 @@ export const streamsRouter = createTRPCRouter({
       // ─────────────────────────────────────────────────────────
       // STEP 2: Check if fresh active stream exists NOW
       // ─────────────────────────────────────────────────────────
-      // Note: updated_at column added in migration 006
-      // If not yet migrated, we'll use started_at as fallback
       const { data: existing, error: checkErr } = await supabase
         .from("streams")
-        .select("id, updated_at, started_at, created_at")
+        .select("id, updated_at, started_at")
         .eq("host_id", ctx.userId)
         .eq("is_live", true)
         .maybeSingle();
@@ -202,8 +200,7 @@ export const streamsRouter = createTRPCRouter({
       // STEP 3: If active stream exists, check if it's fresh
       // ─────────────────────────────────────────────────────────
       if (existing) {
-        // Use updated_at if available (after migration), otherwise use started_at, then created_at, then current time
-        const lastUpdateMs = existing.updated_at || existing.started_at || existing.created_at || NOW;
+        const lastUpdateMs = existing.updated_at || existing.started_at || 0;
         const ageMs = NOW - lastUpdateMs;
 
         // Only block if < 30 seconds old (actively streaming)
@@ -237,7 +234,7 @@ export const streamsRouter = createTRPCRouter({
       // STEP 4: Create new stream with heartbeat tracking
       // ─────────────────────────────────────────────────────────
       const id = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      const stream: Record<string, unknown> = {
+      const stream = {
         id,
         host_id: ctx.userId,
         title: input.title,
@@ -252,19 +249,9 @@ export const streamsRouter = createTRPCRouter({
         country: "",
         gift_score: 0,
         started_at: NOW,
+        updated_at: NOW, // ← Heartbeat timestamp
         ended_at: null,
-        created_at: NOW,
       };
-
-      // Only include updated_at if the column exists (after migration 006)
-      // The column has a default value, so it's optional on insert
-      try {
-        // Try to set it (if migration has run)
-        stream.updated_at = NOW;
-      } catch {
-        // Column doesn't exist yet, that's OK
-        console.log("[Streams] Note: updated_at column not yet migrated, using started_at fallback");
-      }
 
       // ─────────────────────────────────────────────────────────
       // STEP 5: Insert with error handling for unique constraint
@@ -413,14 +400,29 @@ export const streamsRouter = createTRPCRouter({
       };
     }),
 
+  /**
+   * ADMIN: Force end any stream (moderation)
+   */
   forceEnd: adminProcedure
     .input(z.object({ streamId: z.string(), reason: z.string() }))
     .mutation(async ({ input }) => {
+      const NOW = Date.now();
+
       const { error } = await supabase
         .from("streams")
-        .update({ is_live: false, ended_at: Date.now() })
+        .update({
+          is_live: false,
+          ended_at: NOW,
+          updated_at: NOW,
+        })
         .eq("id", input.streamId);
-      if (error) throw new TRPCError({ code: "NOT_FOUND", message: "Stream not found" });
+
+      if (error) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Stream not found",
+        });
+      }
 
       console.log("[Admin] Force ended stream:", input.streamId, "reason:", input.reason);
       return { success: true };
