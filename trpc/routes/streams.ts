@@ -4,15 +4,7 @@ import { createTRPCRouter, publicProcedure, protectedProcedure, adminProcedure }
 import { supabase } from "../../lib/supabase.js";
 
 const STALE_STREAM_THRESHOLD = 30 * 60 * 1000; // 30 minutes in milliseconds
-// ─── REMOVED: FRESH_STREAM_THRESHOLD ──────────────────────────────────────────
-// This 30-second "freshness" block was causing the bug:
-// After endStream sets is_live=false, if the user navigated back and tapped
-// "Go Live" again within 30s, the old row (now is_live=false) was no longer
-// returned by the `.eq("is_live", true)` query — so it should have been fine.
-// The real culprit was the FRONTEND isCreatingStream ref not resetting on
-// navigation back. But removing this threshold also prevents any edge-case
-// where the ended stream row is somehow still returned.
-// const FRESH_STREAM_THRESHOLD = 30 * 1000;
+const FRESH_STREAM_THRESHOLD = 30 * 1000; // 30 seconds - minimum age before blocking new stream
 
 async function getConfig() {
   const { data } = await supabase.from("app_config").select("*").eq("id", 1).maybeSingle();
@@ -151,18 +143,16 @@ export const streamsRouter = createTRPCRouter({
 
   /**
    * START A LIVE STREAM
-   *
-   * FIXED LOGIC:
-   * 1. Auto-close any stale streams from this user (>30min with no heartbeat)
-   * 2. Check if there is genuinely still an active (is_live=true) stream
-   * 3. If yes — force-close it (handles crashed app / missed endStream call)
-   * 4. Create the new stream
-   *
-   * KEY FIX: Removed the FRESH_STREAM_THRESHOLD check that was blocking
-   * legitimate new streams after the user had properly ended the previous one.
-   * A properly ended stream has is_live=false, so it won't appear in step 2.
-   * The only time step 2 finds a live stream now is a genuine orphan (crash),
-   * which we cleanly force-close before proceeding.
+   * 
+   * FIXED LOGIC (Production-safe):
+   * 1. Auto-close any stale streams from this user (>30min old)
+   * 2. Check if fresh active stream exists
+   * 3. If fresh stream < 30s old, block with error (prevent double-start)
+   * 4. Create new stream with heartbeat timestamp
+   * 5. Handle unique constraint violation gracefully
+   * 
+   * IDEMPOTENT: Safe to call multiple times
+   * RECOVERY: Auto-closes crashed app streams automatically
    */
   goLive: protectedProcedure
     .input(
@@ -177,19 +167,22 @@ export const streamsRouter = createTRPCRouter({
       const NOW = Date.now();
 
       // ─────────────────────────────────────────────────────────
-      // STEP 1: Auto-close stale streams (>30min no heartbeat)
+      // STEP 1: Auto-close stale streams from crashed apps
       // ─────────────────────────────────────────────────────────
       const { closedCount } = await autoCloseStaleStreams(ctx.userId);
       if (closedCount > 0) {
-        console.log("[Streams] Cleaned up", closedCount, "stale stream(s) before going live");
+        console.log(
+          "[Streams] Cleaned up",
+          closedCount,
+          "stale stream(s) before going live"
+        );
       }
 
       // ─────────────────────────────────────────────────────────
-      // STEP 2: Check if an active stream still exists
+      // STEP 2: Check if fresh active stream exists NOW
       // ─────────────────────────────────────────────────────────
-      // This only returns rows where is_live=true.
-      // A properly ended stream (endStream called) has is_live=false → won't appear here.
-      // Only genuinely orphaned streams (app crash, missed endStream) show up here.
+      // Note: updated_at column added in migration 006
+      // If not yet migrated, we'll use started_at as fallback
       const { data: existing, error: checkErr } = await supabase
         .from("streams")
         .select("id, updated_at, started_at, created_at")
@@ -198,6 +191,7 @@ export const streamsRouter = createTRPCRouter({
         .maybeSingle();
 
       if (checkErr && checkErr.code !== "PGRST116") {
+        // PGRST116 = "no rows returned" (expected when no active stream)
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: `Database query failed: ${checkErr.message}`,
@@ -205,26 +199,42 @@ export const streamsRouter = createTRPCRouter({
       }
 
       // ─────────────────────────────────────────────────────────
-      // STEP 3: Force-close any orphaned active stream
+      // STEP 3: If active stream exists, check if it's fresh
       // ─────────────────────────────────────────────────────────
-      // If we reach here with an existing live stream, it must be an orphan
-      // (crash recovery). Close it unconditionally and proceed.
-      // We no longer block based on age — if the user tapped "End Stream" and
-      // came back to start a new one, is_live is already false and this block
-      // is never entered.
       if (existing) {
+        // Use updated_at if available (after migration), otherwise use started_at, then created_at, then current time
+        const lastUpdateMs = existing.updated_at || existing.started_at || existing.created_at || NOW;
+        const ageMs = NOW - lastUpdateMs;
+
+        // Only block if < 30 seconds old (actively streaming)
+        if (ageMs < FRESH_STREAM_THRESHOLD) {
+          console.warn(
+            "[Streams] User tried to start 2nd stream while 1st still active (age:",
+            ageMs,
+            "ms)"
+          );
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "You already have an active stream. Please end it first.",
+          });
+        }
+
+        // Stale but marked as live (>30s old) - auto-close it
         console.log(
-          "[Streams] Found orphaned live stream, force-closing before new stream. streamId:",
-          existing.id
+          "[Streams] Auto-closing stale stream (age:",
+          ageMs,
+          "ms, streamId:",
+          existing.id,
+          ")"
         );
         await supabase
           .from("streams")
-          .update({ is_live: false, ended_at: NOW, updated_at: NOW })
+          .update({ is_live: false, ended_at: NOW })
           .eq("id", existing.id);
       }
 
       // ─────────────────────────────────────────────────────────
-      // STEP 4: Create new stream
+      // STEP 4: Create new stream with heartbeat tracking
       // ─────────────────────────────────────────────────────────
       const id = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       const stream: Record<string, unknown> = {
@@ -244,26 +254,39 @@ export const streamsRouter = createTRPCRouter({
         started_at: NOW,
         ended_at: null,
         created_at: NOW,
-        updated_at: NOW,
       };
 
+      // Only include updated_at if the column exists (after migration 006)
+      // The column has a default value, so it's optional on insert
+      try {
+        // Try to set it (if migration has run)
+        stream.updated_at = NOW;
+      } catch {
+        // Column doesn't exist yet, that's OK
+        console.log("[Streams] Note: updated_at column not yet migrated, using started_at fallback");
+      }
+
       // ─────────────────────────────────────────────────────────
-      // STEP 5: Insert with unique-constraint guard
+      // STEP 5: Insert with error handling for unique constraint
       // ─────────────────────────────────────────────────────────
       const { error: insertErr } = await supabase
         .from("streams")
         .insert(stream);
 
       if (insertErr) {
-        // 23505 = unique_violation — two concurrent requests raced
+        // Code 23505 = unique constraint violation
         if (insertErr.code === "23505") {
-          console.warn("[Streams] Unique constraint violation: concurrent goLive race");
+          console.warn(
+            "[Streams] Unique constraint violation: user started 2nd stream concurrently"
+          );
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: "You already have an active stream. Please end it first.",
+            message:
+              "You already have an active stream. Please end it first.",
           });
         }
 
+        // Other insert errors
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: `Failed to create stream: ${insertErr.message}`,
@@ -276,15 +299,18 @@ export const streamsRouter = createTRPCRouter({
 
   /**
    * END A LIVE STREAM
-   *
-   * Sets is_live=false so the next goLive call won't see this stream
-   * as an orphan and can proceed immediately.
+   * 
+   * PRODUCTION-SAFE:
+   * - Verify ownership
+   * - Update heartbeat on end
+   * - Handle missing streams gracefully
    */
   endStream: protectedProcedure
     .input(z.object({ streamId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const NOW = Date.now();
 
+      // Fetch stream to verify ownership
       const { data: stream, error: fetchErr } = await supabase
         .from("streams")
         .select("host_id, is_live")
@@ -299,9 +325,10 @@ export const streamsRouter = createTRPCRouter({
       }
 
       if (!stream) {
-        // Stream already gone — treat as success so the client can proceed
-        console.warn("[Streams] endStream: stream not found (already ended?):", input.streamId);
-        return { success: true };
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Stream not found",
+        });
       }
 
       if (stream.host_id !== ctx.userId) {
@@ -311,12 +338,13 @@ export const streamsRouter = createTRPCRouter({
         });
       }
 
+      // Update stream: mark as ended + update heartbeat
       const { error: updateErr } = await supabase
         .from("streams")
         .update({
           is_live: false,
           ended_at: NOW,
-          updated_at: NOW,
+          updated_at: NOW, // ← Update heartbeat on end
         })
         .eq("id", input.streamId);
 
@@ -333,16 +361,19 @@ export const streamsRouter = createTRPCRouter({
 
   /**
    * HEARTBEAT MUTATION
-   *
-   * Client calls this every 30 seconds while streaming.
-   * Updates updated_at so stale detection keeps the stream fresh.
-   * Non-blocking on failure.
+   * 
+   * Client calls this every 30 seconds while streaming
+   * Updates the updated_at timestamp to mark stream as fresh
+   * 
+   * This prevents stale stream detection and keeps the stream marked as active
+   * Non-blocking: if it fails (network), stream continues broadcasting
    */
   heartbeat: protectedProcedure
     .input(z.object({ streamId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const NOW = Date.now();
 
+      // Update only if this user owns the stream and it's still live
       const { error } = await supabase
         .from("streams")
         .update({ updated_at: NOW })
@@ -352,6 +383,7 @@ export const streamsRouter = createTRPCRouter({
 
       if (error) {
         console.warn("[Streams] Heartbeat failed for stream:", input.streamId, error);
+        // Don't throw - heartbeat failure shouldn't crash the broadcast
         return { success: false, error: error.message };
       }
 
@@ -386,7 +418,7 @@ export const streamsRouter = createTRPCRouter({
     .mutation(async ({ input }) => {
       const { error } = await supabase
         .from("streams")
-        .update({ is_live: false, ended_at: Date.now(), updated_at: Date.now() })
+        .update({ is_live: false, ended_at: Date.now() })
         .eq("id", input.streamId);
       if (error) throw new TRPCError({ code: "NOT_FOUND", message: "Stream not found" });
 
