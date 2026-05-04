@@ -11,6 +11,8 @@ import { storeRouter } from "./routes/store.js";
 import { agenciesRouter } from "./routes/agencies.js";
 import { pkRouter } from "./routes/pk.js";
 import { contentRouter } from "./routes/content.js";
+import { realtimeRouter } from "./routes/realtime.js";
+import { socialRouter } from "./routes/social.js";
 
 export const appRouter = createTRPCRouter({
   auth: authRouter,
@@ -25,6 +27,8 @@ export const appRouter = createTRPCRouter({
   agencies: agenciesRouter,
   pk: pkRouter,
   content: contentRouter,
+  realtime: realtimeRouter,
+  social: socialRouter,
 });
 
 export type AppRouter = typeof appRouter;
